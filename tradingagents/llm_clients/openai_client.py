@@ -1,9 +1,11 @@
 import logging
 import os
+import time
 from typing import Any, Optional
 
 from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
+from openai import InternalServerError
 
 from .base_client import BaseLLMClient, normalize_content, warn_if_truncated
 from .capabilities import get_capabilities
@@ -27,10 +29,29 @@ class NormalizedChatOpenAI(ChatOpenAI):
     purpose-built subclasses below so this base class stays small.
     """
 
+    # 应用层重试参数（由 get_llm 从配置注入；SDK 层 max_retries 恒 0）。
+    app_retries: int = 0
+    app_retry_delay: float = 5.0   # 初始退避（秒），指数翻倍：5s, 10s, 20s...
+
     def invoke(self, input, config=None, **kwargs):
-        response = super().invoke(input, config, **kwargs)
-        warn_if_truncated(response, self.model_name)
-        return normalize_content(response)
+        # 应用层重试：SDK 层 max_retries 恒 0（见 _get_provider_kwargs），5xx 会
+        # 直接抛到这里，由本层按指数退避重试（5s, 10s, 20s...），而非 SDK 的 0.5s。
+        for attempt in range(self.app_retries + 1):
+            try:
+                response = super().invoke(input, config, **kwargs)
+                warn_if_truncated(response, self.model_name)
+                return normalize_content(response)
+            except InternalServerError as exc:
+                if attempt >= self.app_retries:
+                    raise
+                # 指数退避：app_retry_delay * 2^attempt（5s, 10s, 20s...）。
+                delay = self.app_retry_delay * (2 ** attempt)
+                logger.warning(
+                    "LLM 5xx（HTTP %s）请求失败，%s 秒后重试（%d/%d）",
+                    exc.status_code, delay, attempt + 1, self.app_retries,
+                )
+                time.sleep(delay)
+        return None  # pragma: no cover - 循环必 raise 或 return
 
     def with_structured_output(self, schema, *, method=None, **kwargs):
         capabilities = get_capabilities(self.model_name)
@@ -231,6 +252,10 @@ class OpenAIClient(BaseLLMClient):
         for key in _PASSTHROUGH_KWARGS:
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
+
+        # 应用层重试参数（不进 _PASSTHROUGH_KWARGS，但需传给 NormalizedChatOpenAI）。
+        llm_kwargs["app_retries"] = self.kwargs.get("app_retries", 0)
+        llm_kwargs["app_retry_delay"] = self.kwargs.get("app_retry_delay", 15.0)
 
         # Native OpenAI: use Responses API for consistent behavior across
         # all model families. Third-party providers use Chat Completions.
