@@ -402,6 +402,16 @@ class TradingAgentsGraph:
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
 
+        # 项目级 LLM 请求超时/重试（#300705 静默卡死兜底）：单次请求挂起时
+        # 由 timeout 兜底，避免风险辩论节点永久卡住（进程 alive 但无输出）。
+        # 用 is not None 判断，保证 max_retries=0（不重试）也能正确透传。
+        timeout = self.config.get("llm_timeout")
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        max_retries = self.config.get("llm_max_retries")
+        if max_retries is not None:
+            kwargs["max_retries"] = max_retries
+
         if provider == "google":
             thinking_level = self.config.get("google_thinking_level")
             if thinking_level:

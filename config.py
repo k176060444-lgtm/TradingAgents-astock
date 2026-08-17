@@ -68,4 +68,7 @@ CONFIG.update({
     "output_language": "Chinese",
     "max_debate_rounds": 4,
     "max_risk_discuss_rounds": 4,
+    # 项目级 LLM 请求超时/重试（#300705 静默卡死兜底）
+    "llm_timeout": 120,
+    "llm_max_retries": 0,
 })
