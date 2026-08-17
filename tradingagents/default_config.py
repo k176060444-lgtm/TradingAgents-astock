@@ -31,6 +31,13 @@ DEFAULT_CONFIG = {
         if os.environ.get("TRADINGAGENTS_MAX_TOKENS")
         else None
     ),
+    # 单次 LLM 请求超时（秒）。None = 用 provider/客户端默认值。设具体值可兜底
+    # 「请求挂起导致静默卡死」——超时后由客户端抛异常，而非进程 alive 但永久无输出。
+    # 经 _get_provider_kwargs → _PASSTHROUGH_KWARGS 透传给 openai / anthropic 系客户端；
+    # claude_agent_sdk 的 AgentSDKChatModel 不走该链路，暂不受此超时保护（已知缺口）。
+    "llm_timeout": 120,
+    # 超时后的自动重试次数。0 = 超时即失败、不重试（快速暴露，而非叠加等待拖更久）。
+    "llm_max_retries": 0,
     # 可选：给单个角色单独指定模型（#39）。留空 = 全部角色沿用上面的
     # quick/deep 两档，行为与以前完全一致——大多数人只有一家模型，不需要碰这里。
     #
